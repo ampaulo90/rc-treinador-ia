@@ -47,10 +47,9 @@ def detectar_coluna(df, possiveis):
     return None
 
 # ------------------------------------------------------------
-# Processamento correto do CSV do Garmin Forerunner 265
+# Processamento do CSV do Garmin
 # ------------------------------------------------------------
 def processar_csv_garmin(df, fc_max=185):
-    # Normaliza colunas
     df.columns = [str(col).strip().lower() for col in df.columns]
     col_pace = detectar_coluna(df, ["ritmo médio", "pace", "ritmo"])
     col_fc = detectar_coluna(df, ["fc média", "heart rate", "bpm", "frequência cardíaca média"])
@@ -61,14 +60,12 @@ def processar_csv_garmin(df, fc_max=185):
     if not col_pace:
         raise ValueError(f"Coluna pace não encontrada. Colunas: {list(df.columns)}")
 
-    # Filtra resumo
     if col_tipo:
         mask = ~df[col_tipo].astype(str).str.contains("resumo|summary", case=False, na=False)
         df_filtrado = df[mask].copy()
     else:
         df_filtrado = df.copy()
 
-    # Distância (já em km)
     if col_dist:
         if df_filtrado[col_dist].max() > 100:
             distancia_km = df_filtrado[col_dist].sum() / 1000
@@ -91,7 +88,6 @@ def processar_csv_garmin(df, fc_max=185):
         tempo_min = 0
 
     carga = calcular_carga_treino(tempo_min, fc_media, fc_max) if fc_max else tempo_min
-
     pace_por_lap = df_filtrado["pace_decimal"].tolist()
     fc_por_lap = df_filtrado[col_fc].tolist() if col_fc else []
 
@@ -115,7 +111,7 @@ def calcular_carga_treino(tempo_min, fc_media, fc_max):
     return round(carga, 2)
 
 # ------------------------------------------------------------
-# Zonas
+# Zonas de treino
 # ------------------------------------------------------------
 def calcular_zonas_fc(fc_max, fc_repouso):
     reserva = fc_max - fc_repouso
@@ -156,7 +152,7 @@ def calcular_distribuicao_intensidade(historico, pace_limiar):
     return {z: round(v/total*100,1) for z,v in dist.items()} if total else {}
 
 # ------------------------------------------------------------
-# ACWR
+# ACWR profissional
 # ------------------------------------------------------------
 def calcular_acwr_profissional(historico):
     if len(historico) < 7:
@@ -176,31 +172,28 @@ def calcular_acwr_profissional(historico):
     return round(ratio, 2), status
 
 # ------------------------------------------------------------
-# DeepSeek API (compatível com OpenAI)
+# Gemini API (modelo gratuito gemini-1.5-flash)
 # ------------------------------------------------------------
-def call_deepseek(api_key, prompt, temperature=0.7):
-    url = "https://api.deepseek.com/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
+def call_gemini(api_key, prompt, temperature=0.7):
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    headers = {"Content-Type": "application/json"}
     payload = {
-        "model": "deepseek-chat",
-        "messages": [{"role": "user", "content": prompt}],
-        "temperature": temperature
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": temperature}
     }
-    resp = requests.post(url, json=payload, headers=headers)
+    resp = requests.post(url, json=payload, headers=headers, timeout=30)
     if resp.status_code != 200:
-        raise Exception(f"Erro DeepSeek: {resp.text}")
+        erro = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        raise Exception(erro)
     data = resp.json()
-    return data["choices"][0]["message"]["content"].strip()
+    return data["candidates"][0]["content"]["parts"][0]["text"]
 
-def gerar_plano_semanal_deepseek(api_key, perfil, ultimo_treino, historico_cargas, semana_inicio):
+def gerar_plano_semanal_gemini(api_key, perfil, ultimo_treino, historico_cargas, semana_inicio):
     pace_limiar = perfil.get("pace_limiar_km_min", 5.46)
     fc_max = perfil.get("fc_max", 185)
     vo2max = perfil.get("vo2max", 41)
     acwr, status_acwr = calcular_acwr_profissional(historico_cargas) if historico_cargas else (None, "Sem dados")
-    ultimo_texto = f"pace {decimal_to_pace(ultimo_treino['pace_medio_min_km'])}/km, FC {ultimo_treino['fc_media_bpm']}bpm" if ultimo_treino else "nenhum"
+    ultimo_texto = f"pace {decimal_to_pace(ultimo_treino['pace_medio_min_km'])}/km, FC {ultimo_treino['fc_media_bpm']}bpm" if ultimo_treino else "nenhum treino registrado"
 
     prompt = f"""
 Você é um treinador de corrida de elite. Crie um plano de treinos para a semana que começa em {semana_inicio} (segunda a domingo).
@@ -212,17 +205,17 @@ Dados do atleta:
 - ACWR atual: {acwr} ({status_acwr})
 - Último treino: {ultimo_texto}
 
-Regras:
+Regras científicas:
 - Periodização polarizada: 80% volume leve (Z1/Z2), 20% intenso (Z3-Z5).
 - Se ACWR > 1.3: semana de deload (reduzir 30% de volume e intensidade).
 - Se ACWR < 0.8: pode aumentar volume 10%.
 - Incluir um dia de descanso completo.
 
-Retorne APENAS um JSON onde as chaves são datas YYYY-MM-DD (segunda a domingo). Cada valor é um objeto com:
+Retorne APENAS um JSON onde as chaves são datas no formato YYYY-MM-DD (de segunda a domingo). Cada valor é um objeto com:
 {{ "nome": "...", "aquecimento": "...", "repeticoes": int, "duracao": "...", "alvo": "...", "recuperacao": "...", "cooldown": "...", "tipo": "..." }}
 Para descanso: {{ "descanso": true }}
 
-Exemplo:
+Exemplo de saída:
 {{
   "2026-05-04": {{"nome": "Rodagem regenerativa", "aquecimento": "10min @H(z1)", "repeticoes": 1, "duracao": "40min", "alvo": "@H(z2)", "recuperacao": "0", "cooldown": "5min", "tipo": "regenerativo"}},
   "2026-05-05": {{"descanso": true}}
@@ -230,12 +223,13 @@ Exemplo:
 
 Não adicione texto fora do JSON.
 """
-    resposta = call_deepseek(api_key, prompt, temperature=0.8)
-    resposta = resposta.strip("`").replace("json", "").strip()
     try:
-        return json.loads(resposta)
-    except:
-        # Fallback seguro
+        resposta = call_gemini(api_key, prompt, temperature=0.8)
+        resposta = resposta.strip("`").replace("json", "").strip()
+        plano = json.loads(resposta)
+        return plano
+    except Exception as e:
+        print(f"Erro Gemini: {e}")
         return gerar_plano_fallback(semana_inicio, pace_limiar)
 
 def gerar_plano_fallback(semana_inicio, pace_limiar):
@@ -243,9 +237,9 @@ def gerar_plano_fallback(semana_inicio, pace_limiar):
     plano = {}
     for i in range(7):
         dia = (start + timedelta(days=i)).strftime("%Y-%m-%d")
-        if i % 2 == 0:
+        if i % 3 == 0:
             plano[dia] = {
-                "nome": "Intervalado",
+                "nome": "Intervalado VO2max",
                 "aquecimento": "15min @H(z2)",
                 "repeticoes": 6,
                 "duracao": "800m",
@@ -253,6 +247,17 @@ def gerar_plano_fallback(semana_inicio, pace_limiar):
                 "recuperacao": "2min @H(z1)",
                 "cooldown": "10min @H(z1)",
                 "tipo": "intervalado"
+            }
+        elif i % 3 == 1:
+            plano[dia] = {
+                "nome": "Rodagem regenerativa",
+                "aquecimento": "10min @H(z1)",
+                "repeticoes": 1,
+                "duracao": "40min",
+                "alvo": "@H(z2)",
+                "recuperacao": "0",
+                "cooldown": "5min",
+                "tipo": "regenerativo"
             }
         else:
             plano[dia] = {"descanso": True}

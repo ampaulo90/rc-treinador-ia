@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
 import plotly.express as px
-from datetime import datetime, timedelta
+from datetime import datetime
 from supabase_client import (
     init_supabase, salvar_perfil, obter_perfil,
-    salvar_treino_realizado, listar_treinos_realizados,
-    obter_plano_semanal, salvar_plano_semanal
+    salvar_treino_realizado, listar_treinos_realizados
 )
 from utils import (
     processar_csv_garmin, decimal_to_pace,
@@ -22,7 +21,7 @@ st.caption("Treinamento personalizado com análise científica")
 if "supabase" not in st.session_state:
     try:
         st.session_state.supabase = init_supabase()
-        st.session_state.user_id = "default_user"  # Em produção, use autenticação
+        st.session_state.user_id = "default_user"
         st.success("✅ Conectado ao Supabase")
     except Exception as e:
         st.error(f"Erro ao conectar Supabase: {e}. Configure os secrets.")
@@ -50,31 +49,29 @@ tab_perfil, tab_gerar, tab_analisar, tab_historico = st.tabs([
 ])
 
 # ------------------------------------------------------------
-# ABA PERFIL
+# ABA PERFIL (com seus dados reais como padrão)
 # ------------------------------------------------------------
 with tab_perfil:
     st.subheader("Configuração do Atleta")
     with st.form("perfil_form"):
         col1, col2 = st.columns(2)
         with col1:
-            nome = st.text_input("Nome completo", value=perfil.get("nome", "") if perfil else "")
-            # Campo de data no formato DD-MM-YYYY
+            nome = st.text_input("Nome completo", value=perfil.get("nome", "Ampaulo Castro") if perfil else "Ampaulo Castro")
+            # Data no formato DD-MM-YYYY
             data_nasc_str = st.text_input("Data de nascimento (DD-MM-YYYY)", 
-                                          value=perfil.get("data_nascimento", "01-01-1990") if perfil else "01-01-1990")
-            altura = st.number_input("Altura (cm)", 100, 220, value=perfil.get("altura_cm", 170) if perfil else 170)
-            peso = st.number_input("Peso (kg)", 40, 150, value=perfil.get("peso_kg", 70) if perfil else 70)
+                                          value=perfil.get("data_nascimento", "15-07-1990") if perfil else "15-07-1990")
+            altura = st.number_input("Altura (cm)", 100, 220, value=perfil.get("altura_cm", 180) if perfil else 180)
+            peso = st.number_input("Peso (kg)", 40, 150, value=perfil.get("peso_kg", 99) if perfil else 99)
         with col2:
             fc_max = st.number_input("FC máxima (bpm)", 120, 220, value=perfil.get("fc_max", 185) if perfil else 185)
             fc_repouso = st.number_input("FC repouso (bpm)", 40, 100, value=perfil.get("fc_repouso", 52) if perfil else 52)
-            vo2max = st.number_input("VO₂max estimado", 30, 85, value=perfil.get("vo2max", 52) if perfil else 52)
+            vo2max = st.number_input("VO₂max estimado", 30, 85, value=perfil.get("vo2max", 41) if perfil else 41)
             pace_limiar = st.number_input("Pace de limiar (min/km) - Ex: 4:30 = 4.5", 3.0, 8.0, 
-                                          value=float(perfil.get("pace_limiar_km_min", 4.5)) if perfil else 4.5, step=0.1)
+                                          value=float(perfil.get("pace_limiar_km_min", 5.46)) if perfil else 5.46, step=0.01)
         submitted = st.form_submit_button("Salvar Perfil")
         
         if submitted:
-            # Converte data de DD-MM-YYYY para YYYY-MM-DD
             try:
-                from datetime import datetime
                 data_obj = datetime.strptime(data_nasc_str, "%d-%m-%Y").date()
                 data_formatada = data_obj.isoformat()
             except ValueError:
@@ -95,6 +92,7 @@ with tab_perfil:
             st.success("Perfil salvo com sucesso!")
             st.rerun()
 
+    # Exibe zonas calculadas com os dados reais
     if fc_max and fc_repouso:
         st.subheader("📊 Zonas de Treino (por Frequência Cardíaca)")
         zonas_fc = calcular_zonas_fc(fc_max, fc_repouso)
@@ -126,7 +124,6 @@ with tab_gerar:
     if st.button("📥 Exportar YAML", type="primary"):
         yaml_content = gerar_yaml_planner(nome, aquecimento, repeticoes, duracao, alvo, recuperacao, cooldown)
         st.download_button("Baixar .yaml", yaml_content, file_name=f"{nome}.yaml", mime="text/yaml")
-        st.success("YAML gerado!")
 
 # ------------------------------------------------------------
 # ABA ANALISAR CSV
@@ -137,9 +134,6 @@ with tab_analisar:
     if uploaded_file:
         try:
             df = pd.read_csv(uploaded_file)
-            st.success("Arquivo carregado. Processando...")
-
-            # Usar FC máxima do perfil se disponível, senão 185
             fc_max_perfil = st.session_state.perfil.get("fc_max", 185) if st.session_state.perfil else 185
             metricas = processar_csv_garmin(df, fc_max=fc_max_perfil)
 
@@ -152,7 +146,7 @@ with tab_analisar:
                 fig = px.line(y=metricas['pace_por_lap'], title="Pace por volta (min/km)")
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Salvar no histórico (data atual)
+            # Salvar no histórico
             data_hoje = datetime.today().strftime("%Y-%m-%d")
             csv_text = uploaded_file.getvalue().decode("utf-8")
             salvar_treino_realizado(st.session_state.supabase, st.session_state.user_id, data_hoje, metricas, csv_text)
@@ -163,24 +157,21 @@ with tab_analisar:
             st.info("Verifique se o CSV contém colunas como 'Ritmo médio', 'FC Média', 'Distância'.")
 
 # ------------------------------------------------------------
-# ABA HISTÓRICO E CARGA (ACWR)
+# ABA HISTÓRICO E CARGA
 # ------------------------------------------------------------
 with tab_historico:
     st.subheader("Evolução e Carga de Treino")
     historico = listar_treinos_realizados(st.session_state.supabase, st.session_state.user_id, limit=50)
     if historico:
-        # Gráfico de distância
         df_hist = pd.DataFrame(historico)
         df_hist = df_hist.sort_values("data")
         fig_dist = px.line(df_hist, x="data", y="distancia_km", title="Distância por treino (km)")
         st.plotly_chart(fig_dist, use_container_width=True)
 
-        # ACWR
         acwr, status_acwr = calcular_acwr_profissional(historico)
         if acwr:
             st.metric("ACWR (Carga Aguda/Crônica)", acwr, delta=status_acwr)
 
-        # Distribuição de intensidade (se tiver pace limiar no perfil)
         if st.session_state.perfil and st.session_state.perfil.get("pace_limiar_km_min"):
             pace_limiar = st.session_state.perfil["pace_limiar_km_min"]
             dist_intensidade = calcular_distribuicao_intensidade(historico, pace_limiar)

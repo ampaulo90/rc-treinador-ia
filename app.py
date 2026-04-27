@@ -58,8 +58,9 @@ with tab_perfil:
         col1, col2 = st.columns(2)
         with col1:
             nome = st.text_input("Nome completo", value=perfil.get("nome", "") if perfil else "")
-            data_nasc = st.date_input("Data de nascimento", 
-                                      value=datetime.strptime(perfil["data_nascimento"], "%Y-%m-%d").date() if perfil and perfil.get("data_nascimento") else datetime(1990,1,1))
+            # Campo de data no formato DD-MM-YYYY
+            data_nasc_str = st.text_input("Data de nascimento (DD-MM-YYYY)", 
+                                          value=perfil.get("data_nascimento", "01-01-1990") if perfil else "01-01-1990")
             altura = st.number_input("Altura (cm)", 100, 220, value=perfil.get("altura_cm", 170) if perfil else 170)
             peso = st.number_input("Peso (kg)", 40, 150, value=perfil.get("peso_kg", 70) if perfil else 70)
         with col2:
@@ -69,10 +70,20 @@ with tab_perfil:
             pace_limiar = st.number_input("Pace de limiar (min/km) - Ex: 4:30 = 4.5", 3.0, 8.0, 
                                           value=float(perfil.get("pace_limiar_km_min", 4.5)) if perfil else 4.5, step=0.1)
         submitted = st.form_submit_button("Salvar Perfil")
+        
         if submitted:
+            # Converte data de DD-MM-YYYY para YYYY-MM-DD
+            try:
+                from datetime import datetime
+                data_obj = datetime.strptime(data_nasc_str, "%d-%m-%Y").date()
+                data_formatada = data_obj.isoformat()
+            except ValueError:
+                st.error("Data inválida. Use o formato DD-MM-YYYY (ex: 15-07-1990)")
+                st.stop()
+            
             dados = {
                 "nome": nome,
-                "data_nascimento": str(data_nasc),
+                "data_nascimento": data_formatada,
                 "altura_cm": altura,
                 "peso_kg": peso,
                 "fc_max": fc_max,

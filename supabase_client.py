@@ -32,17 +32,6 @@ def salvar_treino_realizado(supabase: Client, user_id: str, data: str, metricas:
     resp = supabase.table("treinos_realizados").upsert(data_obj, on_conflict="user_id,data").execute()
     return resp
 
-def obter_ultimo_treino(supabase: Client, user_id: str):
-    resp = supabase.table("treinos_realizados")\
-        .select("*")\
-        .eq("user_id", user_id)\
-        .order("data", desc=True)\
-        .limit(1)\
-        .execute()
-    if resp.data:
-        return resp.data[0]
-    return None
-
 def listar_treinos_realizados(supabase: Client, user_id: str, limit=50):
     resp = supabase.table("treinos_realizados")\
         .select("*")\
@@ -51,22 +40,3 @@ def listar_treinos_realizados(supabase: Client, user_id: str, limit=50):
         .limit(limit)\
         .execute()
     return resp.data
-
-def salvar_plano_semanal(supabase: Client, user_id: str, semana_inicio: str, plano_json: dict):
-    data_obj = {
-        "user_id": user_id,
-        "semana_inicio": semana_inicio,
-        "plano": plano_json
-    }
-    resp = supabase.table("planos_semanais").upsert(data_obj, on_conflict="user_id,semana_inicio").execute()
-    return resp
-
-def obter_plano_semanal(supabase: Client, user_id: str, semana_inicio: str):
-    resp = supabase.table("planos_semanais")\
-        .select("plano")\
-        .eq("user_id", user_id)\
-        .eq("semana_inicio", semana_inicio)\
-        .execute()
-    if resp.data:
-        return resp.data[0]["plano"]
-    return None

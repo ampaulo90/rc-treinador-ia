@@ -1,9 +1,6 @@
 import pandas as pd
 import re
-import json
-import requests
-import numpy as np
-from datetime import timedelta, datetime
+from datetime import timedelta
 
 # ------------------------------------------------------------
 # Conversão de pace e tempo
@@ -47,7 +44,7 @@ def detectar_coluna(df, possiveis):
     return None
 
 # ------------------------------------------------------------
-# Processamento do CSV do Garmin (corrigido e testado)
+# Processamento do CSV do Garmin
 # ------------------------------------------------------------
 def processar_csv_garmin(df, fc_max=185):
     col_pace = detectar_coluna(df, ["ritmo médio", "pace", "ritmo"])
@@ -72,7 +69,6 @@ def processar_csv_garmin(df, fc_max=185):
         df_clean["tempo_segundos"] = df_clean[col_tempo].apply(time_to_seconds)
 
     if col_dist:
-        # Distância já em km (valores como 2.00, 0.10, etc.)
         distancia_km = df_clean[col_dist].sum()
     else:
         distancia_km = 0
@@ -88,7 +84,6 @@ def processar_csv_garmin(df, fc_max=185):
         tempo_total_str = "N/A"
         tempo_min = 0
 
-    # Carga TRIMP simplificada
     carga = calcular_carga_treino(tempo_min, fc_media, fc_max) if fc_max > 0 else tempo_min
 
     pace_por_lap = df_clean["pace_decimal"].tolist()
@@ -106,9 +101,6 @@ def processar_csv_garmin(df, fc_max=185):
         "num_laps": len(df_clean)
     }
 
-# ------------------------------------------------------------
-# Cálculo de carga (TRIMP)
-# ------------------------------------------------------------
 def calcular_carga_treino(tempo_min, fc_media, fc_max):
     if fc_max == 0 or fc_media == 0:
         return round(tempo_min, 2)
@@ -117,7 +109,7 @@ def calcular_carga_treino(tempo_min, fc_media, fc_max):
     return round(carga, 2)
 
 # ------------------------------------------------------------
-# Zonas de treino
+# Zonas de treino (baseadas nos seus valores reais)
 # ------------------------------------------------------------
 def calcular_zonas_fc(fc_max, fc_repouso):
     reserva = fc_max - fc_repouso
@@ -132,8 +124,7 @@ def calcular_zonas_fc(fc_max, fc_repouso):
 
 def calcular_zonas_pace(pace_limiar_min_km):
     """
-    pace_limiar_min_km = ritmo em min/km (ex: 4.5 -> 4:30)
-    Retorna dicionário zona -> (pace_min, pace_max) em min/km.
+    pace_limiar_min_km = 5.46 (5:27/km)
     """
     zonas = {
         "Z1 (regenerativo)": (pace_limiar_min_km + 1.0, pace_limiar_min_km + 2.0),
@@ -151,9 +142,6 @@ def classificar_zona_por_pace(pace_min_km, pace_limiar):
             return zona
     return "Desconhecida"
 
-# ------------------------------------------------------------
-# Distribuição de intensidade (polarizada)
-# ------------------------------------------------------------
 def calcular_distribuicao_intensidade(historico, pace_limiar):
     if not historico:
         return {}
@@ -169,7 +157,7 @@ def calcular_distribuicao_intensidade(historico, pace_limiar):
     return {z: round(v/total*100, 1) for z, v in distribuicao.items()}
 
 # ------------------------------------------------------------
-# ACWR profissional
+# ACWR
 # ------------------------------------------------------------
 def calcular_acwr_profissional(historico):
     if len(historico) < 7:
@@ -192,7 +180,7 @@ def calcular_acwr_profissional(historico):
     return round(ratio, 2), status
 
 # ------------------------------------------------------------
-# Geração de YAML para Garmin Planner
+# Geração YAML
 # ------------------------------------------------------------
 def gerar_yaml_planner(nome, aquecimento, repeticoes, duracao, alvo, recuperacao, cooldown):
     nome_workout = nome.lower().replace(" ", "_")
@@ -207,19 +195,3 @@ workouts:
         - recovery: {recuperacao}
     - cooldown: {cooldown}
 """
-
-# ------------------------------------------------------------
-# Chamada Gemini (para integração futura)
-# ------------------------------------------------------------
-def _call_gemini(api_key, prompt, temperature=0.7):
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
-    headers = {"Content-Type": "application/json"}
-    payload = {
-        "contents": [{"parts": [{"text": prompt}]}],
-        "generationConfig": {"temperature": temperature}
-    }
-    resp = requests.post(url, json=payload, headers=headers)
-    if resp.status_code != 200:
-        raise Exception(f"Erro Gemini: {resp.text}")
-    data = resp.json()
-    return data["candidates"][0]["content"]["parts"][0]["text"]

@@ -10,14 +10,14 @@ from supabase_client import (
 from utils import (
     processar_csv_garmin, decimal_to_pace, calcular_zonas_fc, calcular_zonas_pace,
     calcular_acwr_profissional, calcular_distribuicao_intensidade, exportar_plano_yaml,
-    gerar_plano_semanal_deepseek, obter_localizacao_e_clima
+    gerar_plano_semanal_gemini, obter_localizacao_e_clima
 )
 
-st.set_page_config(page_title="RC Treinador IA (DeepSeek)", layout="wide")
+st.set_page_config(page_title="RC Treinador IA (Gemini)", layout="wide")
 st.title("🏁 RC Treinador Digital IA")
-st.caption("Planejamento semanal com DeepSeek, análise pós-treino e clima")
+st.caption("Planejamento semanal com Google Gemini, análise pós-treino e clima")
 
-# Supabase
+# Inicializa Supabase
 if "supabase" not in st.session_state:
     try:
         st.session_state.supabase = init_supabase()
@@ -43,11 +43,11 @@ with st.sidebar:
     if temp:
         st.metric("🌡️ Temperatura", f"{temp}°C")
     st.divider()
-    deepseek_key = st.text_input("🔑 DeepSeek API Key", type="password", value="sk-9d87c603a7c54096b4a4bb0e618ed3c9")
-    if deepseek_key:
-        st.session_state.deepseek_key = deepseek_key
+    gemini_key = st.text_input("🔑 Google Gemini API Key", type="password")
+    if gemini_key:
+        st.session_state.gemini_key = gemini_key
     else:
-        st.session_state.deepseek_key = None
+        st.session_state.gemini_key = None
 
 tab_perfil, tab_calendario, tab_analisar, tab_historico = st.tabs(
     ["👤 Meu Perfil", "📅 Plano Semanal (IA)", "📊 Analisar CSV", "📈 Histórico & ACWR"]
@@ -97,39 +97,44 @@ with tab_perfil:
             st.write(f"**{zona}**: {decimal_to_pace(inf)} – {decimal_to_pace(sup)}/km")
 
 # ------------------------------------------------------------
-# Calendário semanal com DeepSeek
+# Calendário semanal com Gemini
 # ------------------------------------------------------------
 with tab_calendario:
     if not perfil:
-        st.error("Configure seu perfil primeiro.")
+        st.error("Configure seu perfil primeiro na aba 'Meu Perfil'.")
     else:
-        if not st.session_state.get("deepseek_key"):
-            st.warning("Insira sua API Key DeepSeek na sidebar.")
-        st.subheader("Plano da Semana")
+        if not st.session_state.get("gemini_key"):
+            st.warning("⚠️ Insira sua API Key do Google Gemini na barra lateral para gerar planos personalizados.")
+        st.subheader("Plano da Semana Atual")
         hoje = datetime.today().date()
         segunda = hoje - timedelta(days=hoje.weekday())
         semana_inicio = segunda.strftime("%Y-%m-%d")
 
-        if st.button("🔄 Gerar / Atualizar Plano com DeepSeek"):
-            if not st.session_state.deepseek_key:
-                st.error("Adicione a chave DeepSeek.")
+        if st.button("🔄 Gerar / Atualizar Plano com Gemini", type="primary"):
+            if not st.session_state.gemini_key:
+                st.error("Adicione a chave Gemini na sidebar.")
             else:
-                with st.spinner("IA DeepSeek criando seu plano semanal..."):
+                with st.spinner("🧠 IA Gemini criando seu plano semanal (10-20 segundos)..."):
                     historico = listar_treinos_realizados(st.session_state.supabase, st.session_state.user_id, limit=30)
-                    ultimo = historico[0] if historico else None
-                    plano = gerar_plano_semanal_deepseek(
-                        st.session_state.deepseek_key, perfil, ultimo, historico, semana_inicio
-                    )
-                    salvar_plano_semanal(st.session_state.supabase, st.session_state.user_id, semana_inicio, plano)
-                    st.success("Plano gerado e salvo!")
-                    st.rerun()
+                    ultimo_treino = historico[0] if historico else None
+                    try:
+                        plano = gerar_plano_semanal_gemini(
+                            st.session_state.gemini_key, perfil, ultimo_treino, historico, semana_inicio
+                        )
+                        salvar_plano_semanal(st.session_state.supabase, st.session_state.user_id, semana_inicio, plano)
+                        st.success("Plano gerado e salvo!")
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"Erro na IA: {e}")
+                        st.info("Você pode tentar novamente ou usar o plano de fallback (básico).")
 
         plano = obter_plano_semanal(st.session_state.supabase, st.session_state.user_id, semana_inicio)
         if not plano:
-            st.info("Nenhum plano ainda. Clique no botão acima.")
+            st.info("Nenhum plano para esta semana. Clique no botão acima para gerar.")
         else:
+            dias_semana = [(segunda + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
             cols = st.columns(7)
-            for i, dia in enumerate(sorted(plano.keys())[:7]):
+            for i, dia in enumerate(dias_semana):
                 treino = plano.get(dia, {})
                 with cols[i]:
                     data_obj = datetime.strptime(dia, "%Y-%m-%d")
@@ -140,14 +145,14 @@ with tab_calendario:
                         st.write(f"🏃 {treino.get('nome', 'Treino')}")
                         st.caption(f"{treino.get('repeticoes',1)}x {treino.get('duracao')} {treino.get('alvo','')}")
             yaml_content = exportar_plano_yaml(plano, semana_inicio)
-            st.download_button("📥 Exportar YAML", yaml_content, file_name=f"plano_{semana_inicio}.yaml")
+            st.download_button("📥 Exportar YAML para Garmin", yaml_content, file_name=f"plano_{semana_inicio}.yaml")
 
 # ------------------------------------------------------------
 # Analisar CSV
 # ------------------------------------------------------------
 with tab_analisar:
-    st.subheader("Envie o CSV do Garmin")
-    uploaded = st.file_uploader("CSV", type="csv")
+    st.subheader("Envie o CSV do Garmin (Forerunner 265)")
+    uploaded = st.file_uploader("Arquivo CSV", type="csv")
     if uploaded:
         try:
             df = pd.read_csv(uploaded, skipinitialspace=True, na_values=[''])
@@ -162,13 +167,12 @@ with tab_analisar:
                 fig = px.line(y=metricas['pace_por_lap'], title="Pace por etapa (min/km)")
                 st.plotly_chart(fig, use_container_width=True)
 
-            # Salvar
             data_hoje = datetime.today().strftime("%Y-%m-%d")
             csv_text = uploaded.getvalue().decode("utf-8", errors="ignore")
             salvar_treino_realizado(st.session_state.supabase, st.session_state.user_id, data_hoje, metricas, csv_text)
-            st.success("Treino salvo!")
+            st.success("Treino salvo no histórico!")
         except Exception as e:
-            st.error(f"Erro: {e}")
+            st.error(f"Erro ao processar CSV: {e}")
             st.info("Verifique as colunas: 'Ritmo médio', 'FC Média', 'Distância', 'Tempo'.")
 
 # ------------------------------------------------------------
@@ -180,14 +184,15 @@ with tab_historico:
         st.info("Nenhum treino registrado.")
     else:
         df_h = pd.DataFrame(historico).sort_values("data")
-        fig = px.line(df_h, x="data", y="distancia_km", title="Evolução da Distância")
+        fig = px.line(df_h, x="data", y="distancia_km", title="Evolução da Distância (km)")
         st.plotly_chart(fig, use_container_width=True)
         acwr, status = calcular_acwr_profissional(historico)
         if acwr:
-            st.metric("ACWR", acwr, delta=status)
+            st.metric("ACWR (Carga Aguda/Crônica)", acwr, delta=status)
         if perfil and perfil.get("pace_limiar_km_min"):
             dist_int = calcular_distribuicao_intensidade(historico, perfil["pace_limiar_km_min"])
             if dist_int:
-                st.subheader("Distribuição por Zonas")
+                st.subheader("Distribuição por Zonas (últimos treinos)")
                 st.json(dist_int)
+        st.subheader("Todos os treinos")
         st.dataframe(df_h[["data", "distancia_km", "pace_medio_min_km", "fc_media_bpm", "tempo_total_str"]])
